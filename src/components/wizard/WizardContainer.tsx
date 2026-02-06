@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { WizardStep, WizardState, IEPCase } from '@/types/iep';
 import { WizardProgress } from './WizardProgress';
 import { StudentInfoStep } from './steps/StudentInfoStep';
+import { UploadDocumentsStep } from './steps/UploadDocumentsStep';
 
 const STEPS: { id: WizardStep; label: string }[] = [
   { id: 'student-info', label: 'Student Info' },
@@ -77,9 +78,16 @@ export function WizardContainer({ caseId, initialCase }: WizardContainerProps) {
         );
       case 'upload-documents':
         return (
-          <PlaceholderStep
-            title="Upload Documents"
-            description="Upload the previous IEP and testing data (PDFs)"
+          <UploadDocumentsStep
+            caseId={caseId}
+            previousIEPPath={state.case.previousIEPUrl}
+            testingDataPath={state.case.testingDataUrl}
+            onUpdate={(data) =>
+              updateCase({
+                previousIEPUrl: data.previousIEPPath,
+                testingDataUrl: data.testingDataPath,
+              })
+            }
             onNext={nextStep}
             onPrev={prevStep}
           />
