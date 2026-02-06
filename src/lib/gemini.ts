@@ -5,13 +5,7 @@
  * IMPORTANT: All text sent to this module MUST already be PII-masked.
  */
 
-// TODO: Install @google/generative-ai package
-// npm install @google/generative-ai
-
-interface GeminiConfig {
-  apiKey: string;
-  model?: string;
-}
+import { GoogleGenerativeAI, Content } from '@google/generative-ai';
 
 interface ChatMessage {
   role: 'user' | 'model';
@@ -23,45 +17,92 @@ interface GenerationResult {
   finishReason: string;
 }
 
+// Initialize Gemini client (server-side only)
+function getGeminiClient() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is not set');
+  }
+  return new GoogleGenerativeAI(apiKey);
+}
+
 /**
- * Creates a Gemini client instance
- * In production, initialize this server-side only
+ * Generate content based on a prompt
+ * Use for one-off generations like PLEP, PWN, etc.
  */
-export function createGeminiClient(config: GeminiConfig) {
-  // TODO: Implement with actual Gemini SDK
-  // const genAI = new GoogleGenerativeAI(config.apiKey);
-  // const model = genAI.getGenerativeModel({ model: config.model || 'gemini-pro' });
+export async function generateContent(
+  prompt: string,
+  systemPrompt?: string
+): Promise<GenerationResult> {
+  const genAI = getGeminiClient();
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-pro',
+    systemInstruction: systemPrompt,
+  });
+
+  const result = await model.generateContent(prompt);
+  const response = result.response;
 
   return {
-    /**
-     * Generate content based on a prompt
-     * Use for one-off generations like PLEP, PWN, etc.
-     */
-    async generate(prompt: string, systemPrompt?: string): Promise<GenerationResult> {
-      // TODO: Implement
-      console.log('Gemini generate called with:', { prompt, systemPrompt });
-      return {
-        text: '[AI Response Placeholder - Implement Gemini SDK]',
-        finishReason: 'placeholder',
-      };
-    },
-
-    /**
-     * Interactive chat for collaborative sections like goal writing
-     * Maintains conversation history
-     */
-    async chat(
-      messages: ChatMessage[],
-      systemPrompt?: string
-    ): Promise<GenerationResult> {
-      // TODO: Implement
-      console.log('Gemini chat called with:', { messages, systemPrompt });
-      return {
-        text: '[AI Chat Response Placeholder - Implement Gemini SDK]',
-        finishReason: 'placeholder',
-      };
-    },
+    text: response.text(),
+    finishReason: response.candidates?.[0]?.finishReason || 'UNKNOWN',
   };
+}
+
+/**
+ * Interactive chat for collaborative sections like goal writing
+ * Maintains conversation history
+ */
+export async function chat(
+  messages: ChatMessage[],
+  systemPrompt?: string
+): Promise<GenerationResult> {
+  const genAI = getGeminiClient();
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-pro',
+    systemInstruction: systemPrompt,
+  });
+
+  // Convert messages to Gemini format
+  const history: Content[] = messages.slice(0, -1).map((msg) => ({
+    role: msg.role === 'user' ? 'user' : 'model',
+    parts: [{ text: msg.content }],
+  }));
+
+  const chat = model.startChat({ history });
+  const lastMessage = messages[messages.length - 1];
+
+  const result = await chat.sendMessage(lastMessage.content);
+  const response = result.response;
+
+  return {
+    text: response.text(),
+    finishReason: response.candidates?.[0]?.finishReason || 'UNKNOWN',
+  };
+}
+
+/**
+ * Stream content for real-time display
+ * Useful for longer generations where user sees content appear
+ */
+export async function* streamContent(
+  prompt: string,
+  systemPrompt?: string
+): AsyncGenerator<string> {
+  const genAI = getGeminiClient();
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-pro',
+    systemInstruction: systemPrompt,
+  });
+
+  const result = await model.generateContentStream(prompt);
+
+  for await (const chunk of result.stream) {
+    const text = chunk.text();
+    if (text) {
+      yield text;
+    }
+  }
 }
 
 /**
@@ -119,6 +160,18 @@ Write a PWN that:
 4. Describes evaluation procedures and relevant factors
 5. Lists sources for parents to obtain assistance
 6. Uses clear, parent-friendly language`,
+
+  // Interactive Q&A for gathering information
+  INTAKE_QA: `You are an expert special education teacher gathering information for an IEP.
+The student is referred to as [STUDENT_NAME] - this is a placeholder for privacy.
+Ask targeted questions to gather the information needed for a comprehensive IEP.
+Ask one question at a time. Be specific and professional.
+Focus on:
+1. Current performance levels
+2. Specific challenges and their impact
+3. Successful strategies and accommodations
+4. Student strengths and interests
+5. Parent/teacher observations`,
 };
 
 /**
@@ -138,3 +191,33 @@ Ensure all generated content meets these quality standards.`,
 
 Align goals and objectives to these standards where applicable.`,
 };
+
+/**
+ * Helper to combine system prompts with reference data
+ */
+export function buildSystemPrompt(
+  basePrompt: string,
+  options?: {
+    qpiContent?: string;
+    standardsContent?: string;
+  }
+): string {
+  let prompt = basePrompt;
+
+  if (options?.qpiContent) {
+    prompt +=
+      '\n\n' +
+      REFERENCE_PROMPTS.QPI_CONTEXT.replace('[QPI_CONTENT]', options.qpiContent);
+  }
+
+  if (options?.standardsContent) {
+    prompt +=
+      '\n\n' +
+      REFERENCE_PROMPTS.STATE_STANDARDS.replace(
+        '[STANDARDS_CONTENT]',
+        options.standardsContent
+      );
+  }
+
+  return prompt;
+}
